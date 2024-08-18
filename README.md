@@ -343,12 +343,23 @@ pub fn remove_user(_ctx: Context<RemoveUser>, id: u32) -> Result<()> {
 ## Fixed program
 
 ```rs title=lib.rs
+use anchor_lang::prelude::*;
+
+declare_id!("6L2Rzxs71PiAxUmUxaNTT2Q3mnQjiJ8DwWiV1UxKa7Ph");
+
+const MAX_NAME_LENGTH: usize = 10;
+const PDA_USER_SEED: &[u8; 4] = b"user";
+
 #[program]
 pub mod secure_program {
     use super::*;
 
     pub fn initialize(ctx: Context<CreateUser>, id: u32, name: String) -> Result<()> {
         let user: &mut Account<User> = &mut ctx.accounts.user;
+
+        if name.len() > MAX_NAME_LENGTH {
+            return err!(MyError::NameTooLong);
+        }
 
         user.id = id;
         user.owner = *ctx.accounts.signer.key;
@@ -369,6 +380,10 @@ pub mod secure_program {
         let sender: &mut Account<User> = &mut ctx.accounts.sender;
         let receiver: &mut Account<User> = &mut ctx.accounts.receiver;
 
+        if amount <= 0 {
+            return err!(MyError::InvalidTransferAmount);
+        }
+
         if sender.points < amount {
             return err!(MyError::NotEnoughPoints);
         }
@@ -376,19 +391,26 @@ pub mod secure_program {
         sender.points = sender
             .points
             .checked_sub(amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?;
+            .ok_or(MyError::Underflow)?;
 
-        receiver.points = sender
+        receiver.points = receiver
             .points
             .checked_add(amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?;
+            .ok_or(MyError::Overflow)?;
 
         msg!("Transferred {} points", amount);
 
         Ok(())
     }
 
-    pub fn remove_user(_ctx: Context<RemoveUser>, id: u32) -> Result<()> {
+    pub fn remove_user(ctx: Context<RemoveUser>, id: u32) -> Result<()> {
+        let user_account: &Account<User> = &ctx.accounts.user;
+
+        // Check if the account exists just in case
+        if user_account.owner == Pubkey::default() {
+            return err!(MyError::AccountDoesNotExist);
+        }
+
         msg!("Account closed for user with id: {}", id);
 
         Ok(())
@@ -401,8 +423,8 @@ pub struct CreateUser<'info> {
     #[account(
         init,
         payer = signer,
-        space = size_of::<User>() + 1,
-        seeds = [b"user", id.to_le_bytes().as_ref()],
+        space = 8 + 4 + 32 + (4 + 10) + 2,
+        seeds = [PDA_USER_SEED, id.to_le_bytes().as_ref()],
         bump
     )]
     pub user: Account<'info, User>,
@@ -419,14 +441,14 @@ pub struct TransferPoints<'info> {
     #[account(
         mut,
         constraint = signer.key == &sender.owner,
-        seeds = [b"user", id_sender.to_le_bytes().as_ref()],
+        seeds = [PDA_USER_SEED, id_sender.to_le_bytes().as_ref()],
         bump,
     )]
     pub sender: Account<'info, User>,
 
     #[account(
         mut,
-        seeds = [b"user", id_receiver.to_le_bytes().as_ref()],
+        seeds = [PDA_USER_SEED, id_receiver.to_le_bytes().as_ref()],
         bump
     )]
     pub receiver: Account<'info, User>,
@@ -444,7 +466,7 @@ pub struct RemoveUser<'info> {
         mut,
         constraint = signer.key == &user.owner,
         close = signer,
-        seeds = [b"user", id.to_le_bytes().as_ref()],
+        seeds = [PDA_USER_SEED, id.to_le_bytes().as_ref()],
         bump
     )]
     pub user: Account<'info, User>,
@@ -468,5 +490,15 @@ pub struct User {
 pub enum MyError {
     #[msg("Not enough points to transfer")]
     NotEnoughPoints,
+    #[msg("Cannot transfer zero or less than zero points")]
+    InvalidTransferAmount,
+    #[msg("Arithmetic overflow occured when adding points")]
+    Overflow,
+    #[msg("Arithmetic underflow occured when subtracting points")]
+    Underflow,
+    #[msg("Name is too long")]
+    NameTooLong,
+    #[msg("User account does not exist")]
+    AccountDoesNotExist,
 }
 ```
