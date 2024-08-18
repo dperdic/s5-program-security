@@ -125,11 +125,13 @@ The structs have multiple issues.
 
 - First issue is the `instruction` attribute before the `derive` attribute on all of the structs. This is currently a warning but will be a hard error in future releases. More on this [here.](https://github.com/rust-lang/rust/issues/79202)
 
-- Second issue is the `signer` account for which there is no check if it is actually a signer or not. To do this the signer should be of type `Signer` and not of type `AccountInfo`. The `Signer` type extends the `AccountInfo` type and implements a check if the account is actually a signer.
+- The `signer` accounts for don't have a check implemented if they are signers or not. To do this the `signer` should be of type `Signer` and not of type `AccountInfo`. The `Signer` type extends the `AccountInfo` type and implements a check if the account is actually a signer.
 
 - The `user` account has insuficient space. The size of the user struct is 64 but the sum of the space currently provisioned is 59. An easier way to calculate the space would be to use the `size_of` function and 8.
 
-- The sender and reciever accounts should be mutable in the `TransferPoints` struct to allow the changes in the amount to be persisted.
+- The `sender` and `reciever` accounts should be mutable in the `TransferPoints` struct to allow the changes in the amount to be persisted.
+
+- The `sender` account should have a signer constraint so that only the sender can transfer the points to the reciever
 
 - The `user` account in the `RemoveUser` struct is not mutable and doesn't have a `close` constraint so the `user` account cannot be closed when calling the `remove_user` instruction
 
@@ -217,6 +219,7 @@ pub struct CreateUser<'info> {
 pub struct TransferPoints<'info> {
     #[account(
         mut,
+        signer,
         seeds = [b"user", id_sender.to_le_bytes().as_ref()],
         bump
     )]
@@ -299,9 +302,9 @@ pub fn transfer_points(
     }
 
     sender.points = sender
-            .points
-            .checked_sub(amount)
-            .ok_or(ProgramError::ArithmeticOverflow)?;
+        .points
+        .checked_sub(amount)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
 
     receiver.points = sender
         .points
