@@ -6,11 +6,11 @@ Fifth assignment for the Solana Summer Fellowship 2024.
 
 ### Description
 
-```txt
-Write about the issues and how to fix them in the Anchor program below.
+```
+Write a README about the issues in the provided Anchor program and how to fix them.
 ```
 
-### Insecure code
+### Insecure program
 
 ```rs title="lib.rs"
 use anchor_lang::prelude::*;
@@ -133,6 +133,8 @@ pub enum MyError {
 
 - The `user` account in the `RemoveUser` struct should have a constraint that checks if the signer public key is equal to the user's owner public key otherwise anyone could close the account.
 
+- Even though it's not a security issue, the `user` seed should be extracted to a constant so that it can be reused and to prevent user error when writing future instructions.
+
 Before:
 
 ```rs
@@ -194,14 +196,16 @@ pub struct RemoveUser<'info> {
 After:
 
 ```rs
+const PDA_USER_SEED: &[u8; 4] = b"user";
+
 #[derive(Accounts)]
 #[instruction(id: u32)]
 pub struct CreateUser<'info> {
     #[account(
         init,
         payer = signer,
-        space = size_of::<User>() + 8,
-        seeds = [b"user", id.to_le_bytes().as_ref()],
+        space = 8 + 4 + 32 + (4 + 10) + 2,
+        seeds = [PDA_USER_SEED, id.to_le_bytes().as_ref()],
         bump
     )]
     pub user: Account<'info, User>,
@@ -218,14 +222,14 @@ pub struct TransferPoints<'info> {
     #[account(
         mut,
         constraint = signer.key == &sender.owner,
-        seeds = [b"user", id_sender.to_le_bytes().as_ref()],
+        seeds = [PDA_USER_SEED, id_sender.to_le_bytes().as_ref()],
         bump,
     )]
     pub sender: Account<'info, User>,
 
     #[account(
         mut,
-        seeds = [b"user", id_receiver.to_le_bytes().as_ref()],
+        seeds = [PDA_USER_SEED, id_receiver.to_le_bytes().as_ref()],
         bump
     )]
     pub receiver: Account<'info, User>,
@@ -243,7 +247,7 @@ pub struct RemoveUser<'info> {
         mut,
         constraint = signer.key == &user.owner,
         close = signer,
-        seeds = [b"user", id.to_le_bytes().as_ref()],
+        seeds = [PDA_USER_SEED, id.to_le_bytes().as_ref()],
         bump
     )]
     pub user: Account<'info, User>,
@@ -372,7 +376,7 @@ pub fn transfer_points(
 - The instruction uses the wrong struct and it will most likely cause a transaction error when called. The `TransferPoints` struct should be replaced with the `RemoveUser` struct.
 - There should be a check to seee if the `user` account exists before deleting it.
 
-Before
+Before:
 
 ```rs
 pub fn remove_user(_ctx: Context<TransferPoints>, id: u32) -> Result<()> {
@@ -381,7 +385,7 @@ pub fn remove_user(_ctx: Context<TransferPoints>, id: u32) -> Result<()> {
 }
 ```
 
-After
+After:
 
 ```rs
 pub fn remove_user(ctx: Context<RemoveUser>, id: u32) -> Result<()> {
@@ -397,7 +401,9 @@ pub fn remove_user(ctx: Context<RemoveUser>, id: u32) -> Result<()> {
 }
 ```
 
-## Fixed program
+### Secure program
+
+After all the changes are implemented this is what the secure program should look like.
 
 ```rs title=lib.rs
 use anchor_lang::prelude::*;
