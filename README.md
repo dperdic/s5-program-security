@@ -125,15 +125,13 @@ pub enum MyError {
 
 - The `signer` accounts in all of the structs don't have a check implemented if they are signers or not. To do this the `signer` should be of type `Signer` and not of type `AccountInfo`. The `Signer` type extends the `AccountInfo` type and implements a check if the account is actually a signer.
 
-- The `user` account has insuficient space. The size of the user struct is 64 but the sum of the space currently provisioned is 59. An easier way to calculate the space would be to use the `size_of` function and add a number between 1 and 8 for the bump.
-
 - The `sender` and `reciever` accounts should be mutable in the `TransferPoints` struct to allow the changes to be persisted.
 
-- The `sender` account in the `TransferPoints` struct should have a constraint that checks if the signer public key is equal to the sender's owner public key
+- The `sender` account in the `TransferPoints` struct should have a constraint that checks if the signer public key is equal to the sender's owner public key otherwise anyone could transfer points from the sender.
 
-- The `user` account in the `RemoveUser` struct is not mutable and doesn't have a `close` constraint so the `user` account cannot be closed when calling the `remove_user` instruction
+- The `user` account in the `RemoveUser` struct is not mutable and doesn't have a `close` constraint so the `user` account cannot be closed when calling the `remove_user` instruction.
 
-- The `user` account in the `RemoveUser` struct should have a constraint that checks if the signer public key is equal to the user's owner public key.
+- The `user` account in the `RemoveUser` struct should have a constraint that checks if the signer public key is equal to the user's owner public key otherwise anyone could close the account.
 
 Before:
 
@@ -257,11 +255,54 @@ pub struct RemoveUser<'info> {
 }
 ```
 
+#### Initialize instruction
+
+- Since the size of the name is restricted in the `init` constraint in the `CreateUser` struct to 10, there should be a check for the length of the name passed to the `initialize` instruction.
+
+Before:
+
+```rs
+pub fn initialize(ctx: Context<CreateUser>, id: u32, name: String) -> Result<()> {
+    let user = &mut ctx.accounts.user;
+    user.id = id;
+    user.owner = *ctx.accounts.signer.key;
+    user.name = name;
+    user.points = 1000;
+    msg!("Created new user with 1000 points and id: {}", id);
+    Ok(())
+}
+```
+
+After:
+
+```rs
+const MAX_NAME_LENGTH: usize = 10;
+
+pub fn initialize(ctx: Context<CreateUser>, id: u32, name: String) -> Result<()> {
+    let user = &mut ctx.accounts.user;
+
+    if name.len() > MAX_NAME_LENGTH {
+        return err!(MyError::NameTooLong);
+    }
+
+    user.id = id;
+    user.owner = *ctx.accounts.signer.key;
+    user.name = name;
+    user.points = 1000;
+
+    msg!("Created new user with 1000 points and id: {}", id);
+
+    Ok(())
+}
+```
+
 #### Transfer points instruction
 
-- There should be a check to see if the reciever pda exists before allocating points. If it doesn't exist the transaction will fail.
+- There should be a check to see if the `amount` is greater than 0 so that only valid amounts of points are transfered.
 
 - The arithmetic should be done using `checked_add` and `checked_sub` functions to insure there are no overflows or underflows.
+
+- There should be a check to see if the `reciever` account exists before transfering points to it.
 
 Before:
 
@@ -299,6 +340,14 @@ pub fn transfer_points(
     let sender = &mut ctx.accounts.sender;
     let receiver = &mut ctx.accounts.receiver;
 
+    if amount <= 0 {
+        return err!(MyError::InvalidTransferAmount);
+    }
+
+    if receiver.owner == Pubkey::default() {
+        return err!(MyError::AccountDoesNotExist);
+    }
+
     if sender.points < amount {
         return err!(MyError::NotEnoughPoints);
     }
@@ -306,12 +355,12 @@ pub fn transfer_points(
     sender.points = sender
         .points
         .checked_sub(amount)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
+        .ok_or(MyError::Underflow)?;
 
     receiver.points = sender
         .points
         .checked_add(amount)
-        .ok_or(ProgramError::ArithmeticOverflow)?;
+        .ok_or(MyError::Overflow)?;
 
     msg!("Transferred {} points", amount);
     Ok(())
@@ -320,7 +369,8 @@ pub fn transfer_points(
 
 #### Remove user instruction
 
-The instruction user the wrong struct and it will most likely cause a transaction error when called. The `TransferPoints` struct should be replaced with the `RemoveUser` struct.
+- The instruction uses the wrong struct and it will most likely cause a transaction error when called. The `TransferPoints` struct should be replaced with the `RemoveUser` struct.
+- There should be a check to seee if the `user` account exists before deleting it.
 
 Before
 
@@ -334,8 +384,15 @@ pub fn remove_user(_ctx: Context<TransferPoints>, id: u32) -> Result<()> {
 After
 
 ```rs
-pub fn remove_user(_ctx: Context<RemoveUser>, id: u32) -> Result<()> {
+pub fn remove_user(ctx: Context<RemoveUser>, id: u32) -> Result<()> {
+    let user: &Account<User> = &ctx.accounts.user;
+
+    if user.owner == Pubkey::default() {
+        return err!(MyError::AccountDoesNotExist);
+    }
+
     msg!("Account closed for user with id: {}", id);
+
     Ok(())
 }
 ```
@@ -384,6 +441,10 @@ pub mod secure_program {
             return err!(MyError::InvalidTransferAmount);
         }
 
+        if receiver.owner == Pubkey::default() {
+            return err!(MyError::AccountDoesNotExist);
+        }
+
         if sender.points < amount {
             return err!(MyError::NotEnoughPoints);
         }
@@ -406,7 +467,6 @@ pub mod secure_program {
     pub fn remove_user(ctx: Context<RemoveUser>, id: u32) -> Result<()> {
         let user_account: &Account<User> = &ctx.accounts.user;
 
-        // Check if the account exists just in case
         if user_account.owner == Pubkey::default() {
             return err!(MyError::AccountDoesNotExist);
         }
