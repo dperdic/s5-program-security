@@ -261,7 +261,7 @@ pub struct RemoveUser<'info> {
 
 #### Initialize instruction
 
-- Since the size of the name is restricted in the `init` constraint in the `CreateUser` struct to 10, there should be a check for the length of the name passed to the `initialize` instruction.
+- Since the size of the `name` property is restricted by the `space` constraint in the `CreateUser` struct to 10 bytes, there should be a check for the length of the name passed to the `initialize` instruction to prevent overflow errors.
 
 Before:
 
