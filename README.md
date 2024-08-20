@@ -122,17 +122,11 @@ pub enum MyError {
 #### Struct issues
 
 - The `instruction` attribute before the `derive` attribute on all of the structs. This is currently a warning but will be a hard error in future releases. More on this [here.](https://github.com/rust-lang/rust/issues/79202)
-
 - The `signer` accounts in all of the structs don't have a check implemented if they are signers or not. To do this the `signer` should be of type `Signer` and not of type `AccountInfo`. The `Signer` type extends the `AccountInfo` type and implements a check if the account is actually a signer.
-
 - The `sender` and `reciever` accounts should be mutable in the `TransferPoints` struct to allow the changes to be persisted.
-
 - The `sender` account in the `TransferPoints` struct should have a constraint that checks if the signer public key is equal to the sender's owner public key otherwise anyone could transfer points from the sender.
-
 - The `user` account in the `RemoveUser` struct is not mutable and doesn't have a `close` constraint so the `user` account cannot be closed when calling the `remove_user` instruction.
-
 - The `user` account in the `RemoveUser` struct should have a constraint that checks if the signer public key is equal to the user's owner public key otherwise anyone could close the account.
-
 - Even though it's not a security issue, the `user` seed should be extracted to a constant so that it can be reused and to prevent user error when writing future instructions.
 
 Before:
@@ -303,10 +297,9 @@ pub fn initialize(ctx: Context<CreateUser>, id: u32, name: String) -> Result<()>
 #### Transfer points instruction
 
 - There should be a check to see if the `amount` is greater than 0 so that only valid amounts of points are transfered.
-
 - The arithmetic should be done using `checked_add` and `checked_sub` functions to insure there are no overflows or underflows.
-
 - There should be a check to see if the `reciever` account exists before transfering points to it.
+- There should be a check to see if the `sender` and `reciever` accounts are the same
 
 Before:
 
@@ -350,6 +343,10 @@ pub fn transfer_points(
 
     if receiver.owner == Pubkey::default() {
         return err!(MyError::AccountDoesNotExist);
+    }
+
+    if sender.key() == receiver.key() {
+        return err!(MyError::IdenticalAccounts);
     }
 
     if sender.points < amount {
@@ -449,6 +446,10 @@ pub mod secure_program {
 
         if receiver.owner == Pubkey::default() {
             return err!(MyError::AccountDoesNotExist);
+        }
+
+        if sender.key() == receiver.key() {
+            return err!(MyError::IdenticalAccounts);
         }
 
         if sender.points < amount {
@@ -566,5 +567,7 @@ pub enum MyError {
     NameTooLong,
     #[msg("User account does not exist")]
     AccountDoesNotExist,
+    #[msg("Sender and reciever accounts are the same")]
+    IdenticalAccounts,
 }
 ```
